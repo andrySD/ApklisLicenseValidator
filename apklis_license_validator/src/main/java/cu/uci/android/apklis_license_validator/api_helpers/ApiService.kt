@@ -63,7 +63,11 @@ class ApiService {
                             try {
                                 val licenseResponse = gson.fromJson(responseBody, VerifyLicenseResponse::class.java)
                                 if (licenseResponse?.license != null || licenseResponse?.expireIn != null) {
-                                    return@withContext ApiResult.Success(PaymentResponse.DirectLicense(licenseResponse), headers)
+                                    return@withContext ApiResult.Success(
+                                        PaymentResponse.DirectLicense(licenseResponse),
+                                        headers,
+                                        responseBody,
+                                    )
                                 }
                             } catch (e: JsonSyntaxException) {
                                 // It's not a direct license, so we'll try to parse it as a QR code next.
@@ -71,7 +75,11 @@ class ApiService {
 
                             // Otherwise, parse as QrCode
                             val qrCode = gson.fromJson(responseBody, QrCode::class.java)
-                            return@withContext ApiResult.Success(PaymentResponse.Qr(qrCode), headers)
+                            return@withContext ApiResult.Success(
+                                PaymentResponse.Qr(qrCode),
+                                headers,
+                                responseBody,
+                            )
                         } else {
                             ApiResult.Error(response.code, "Empty response body" )
                         }
@@ -117,7 +125,7 @@ class ApiService {
                             try {
                                 val headers = response.headers.toMap()
                                 val licenseResponse = gson.fromJson(responseBody, VerifyLicenseResponse::class.java)
-                                ApiResult.Success(licenseResponse, headers)
+                                ApiResult.Success(licenseResponse, headers, responseBody)
                             } catch (e: Exception) {
                                 ApiResult.Exception(e)
                             }

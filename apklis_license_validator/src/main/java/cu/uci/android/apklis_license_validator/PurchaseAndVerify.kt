@@ -12,7 +12,7 @@ import cu.uci.android.apklis_license_validator.models.ApklisAccountData
 import cu.uci.android.apklis_license_validator.models.LicenseRequest
 import cu.uci.android.apklis_license_validator.models.PaymentRequest
 import cu.uci.android.apklis_license_validator.models.QrCode
-import cu.uci.android.apklis_license_validator.models.VerifyLicenseResponse
+import cu.uci.android.apklis_license_validator.signature_helpers.PythonJson
 import cu.uci.android.apklis_license_validator.signature_helpers.SignatureVerificationService
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
@@ -48,19 +48,17 @@ class PurchaseAndVerify {
                     return when (paymentResult) {
                         is ApiResult.Success -> {
                             val responseData = paymentResult.data
-                            val responseBodyString = when (responseData) {
+                            val signedPayload = paymentResult.rawBody ?: when (responseData) {
                                 is PaymentResponse.Qr -> responseData.qrCode.toJsonString()
                                 is PaymentResponse.DirectLicense -> responseData.license.toJsonString()
-                                // Add else branch to make 'when' exhaustive
                                 else -> ""
                             }
 
                             when (responseData) {
                                 is PaymentResponse.Qr -> {
-                                    // Verify signature only on successful response
                                     val isSignatureValid = verifySignatureIfPresent(
                                         context,
-                                        responseBodyString,
+                                        signedPayload,
                                         paymentResult.headers
                                     )
 
@@ -72,7 +70,6 @@ class PurchaseAndVerify {
                                         }
                                     }
 
-                                    // It's a QR code, proceed with the dialog flow
                                     return handleWebSocketAndQrDialog(
                                         context,
                                         responseData.qrCode,
@@ -80,7 +77,6 @@ class PurchaseAndVerify {
                                     )
                                 }
                                 is PaymentResponse.DirectLicense -> {
-                                    // It's a direct license, return success immediately
                                     return buildMap {
                                         put("success", true)
                                         put("paid", true)
@@ -296,12 +292,12 @@ class PurchaseAndVerify {
                    return when (verificationResult) {
                         is ApiResult.Success -> {
 
-                            val verifyLicenseResponse : VerifyLicenseResponse = verificationResult.data
+                            val signedPayload = verificationResult.rawBody
+                                ?: verificationResult.data.toJsonString()
 
-                            // Verify signature only on successful response
                             val isSignatureValid = verifySignatureIfPresent(
                                 context,
-                                verifyLicenseResponse.toJsonString(),
+                                signedPayload,
                                 verificationResult.headers
                             )
 
@@ -352,24 +348,38 @@ class PurchaseAndVerify {
         /**
          * Verifies the signature if present in the response headers
          */
-        private  fun verifySignatureIfPresent(
+        private fun verifySignatureIfPresent(
             context: Context,
-            responseString: String,
+            rawBody: String,
             headers: Map<String, String>?
         ): Boolean {
-            val signatureValue = headers?.get(SIGNATURE_HEADER_NAME)
+            val signatureValue = headerValue(headers, SIGNATURE_HEADER_NAME)
 
             if (signatureValue.isNullOrEmpty()) {
                 Log.e(TAG, context.getString(R.string.log_no_signature_header))
                 return false
             }
 
+            val payloads = linkedSetOf<String>()
+            try {
+                payloads.add(PythonJson.dumps(rawBody))
+            } catch (e: Exception) {
+                Log.w(TAG, "Could not re-serialize response for signature check", e)
+            }
+            payloads.add(rawBody)
+            return payloads.any { payload ->
+                signatureVerificationService.verifySignature(
+                    context,
+                    payload.toByteArray(Charsets.UTF_8),
+                    signatureValue,
+                )
+            }
+        }
 
-            return signatureVerificationService.verifySignature(
-                context,
-                responseString.toByteArray(),
-                signatureValue
-            )
+        private fun headerValue(headers: Map<String, String>?, name: String): String? {
+            if (headers == null) return null
+            headers[name]?.let { return it }
+            return headers.entries.firstOrNull { it.key.equals(name, ignoreCase = true) }?.value
         }
     }
     }
